@@ -16,6 +16,13 @@ pop_df = pd.read_csv('https://www2.census.gov/programs-surveys/popest/datasets/2
 ## MIT Election lab data on election returns by FIPS ##
 poli_df = pd.read_csv('https://dataverse.harvard.edu/api/access/datafile/3641280?format=original&amp;gbrecs=true')
 
+## Census health insurance information ##
+insur_df = pd.read_csv('https://www.census.gov/cgi-bin/nbroker?_service=sas_serv1&_debug=0&_program=cedr.sasapp_main.sas&s_appName=sahie&s_measures=ui_snc&s_statefips=&s_stcou=&s_agecat=0&s_racecat=0&s_sexcat=0&s_iprcat=0&s_searchtype=sc&map_yearSelector=2017&s_year=2017&s_output=csv&menu=grid&s_orderBy=stcou%20asc,year%20desc,name%20asc')
+insur_df = insur_df.rename(columns={'ID' : 'fips'})
+
+## Census percent in poverty information ##
+pov_df = pd.read_csv('https://www.census.gov/cgi-bin/nbroker?_service=sas_serv1&_debug=0&_program=cedr.sasapp_main.sas&s_appName=saipe&s_measures=aa_snc&s_state=&s_county=&s_district=&map_yearSelector=2018&map_geoSelector=aa_c&s_year=2018&s_output=csv&menu=grid&s_orderBy=id%20asc,year%20desc')
+pov_df = pov_df.rename(columns={'County ID' : 'fips'})
 
 ## CLEAN DATA ##
 ## translate gov data into fips code ##
@@ -28,6 +35,7 @@ def format_fips(row):
 
 pop_df = pop_df.apply(format_fips, axis=1)
 
+
 ## New York is not broken by county in the NYT file and has no FIPS ##
 ## Assign a dummy fips for matching ##
 covid_df['fips'] = numpy.where(covid_df['county'] == 'New York City', 99999.0, covid_df['fips'])
@@ -36,11 +44,11 @@ pop_df['fips'] = numpy.where(
                                 numpy.isin(
                                     pop_df['CTYNAME'],
                                     [
-                                        'Kings County',
-                                        'Queens County',
-                                        'New York County',
-                                        'Bronx County',
-                                        'Richmond County'
+                                        'Kings County', ## 36047.0 ##
+                                        'Queens County', ## 36081.0 ##
+                                        'New York County', ## 36061.0 ##
+                                        'Bronx County', ## 36005.0 ##
+                                        'Richmond County' ## 36085.0 ##
                                     ]
                                 ) &
                                 (pop_df['STNAME'] == 'New York')
@@ -49,6 +57,23 @@ pop_df['fips'] = numpy.where(
                             pop_df['fips']
 )
 
+## format census data before merge, grouping nyc into the dummy fips ##
+fips_replace_dict = {
+    36047 : 99999,
+    36081 : 99999,
+    36061 : 99999,
+    36005 : 99999,
+    36085 : 99999,
+}
+
+insur_df['fips'] = insur_df['fips'].replace(fips_replace_dict)
+pov_df['fips'] = pov_df['fips'].replace(fips_replace_dict)
+
+insur_df_grouped = insur_df.groupby(['fips'])['Uninsured: %'].mean().reset_index()
+insur_df_grouped['uninsured_percentile'] = insur_df_grouped['Uninsured: %'].rank(pct=True)
+
+pov_df_grouped = pov_df.groupby(['fips'])['All Ages in Poverty Percent'].mean().reset_index()
+pov_df_grouped['poverty_percentile'] = pov_df_grouped['All Ages in Poverty Percent'].rank(pct=True)
 
 ## Calculate political affiliation of each county ##
 ## Kinda lazy ... assuming all counties had only 1 candidate / party and at least 1 vote for republican ##
@@ -81,6 +106,22 @@ covid_df = pd.merge(
 covid_df = pd.merge(
     covid_df,
     poli_df,
+    on=['fips'],
+    how='left'
+)
+
+## add insurance data ##
+covid_df = pd.merge(
+    covid_df,
+    insur_df_grouped,
+    on=['fips'],
+    how='left'
+)
+
+## add poverty data ##
+covid_df = pd.merge(
+    covid_df,
+    pov_df_grouped,
     on=['fips'],
     how='left'
 )
